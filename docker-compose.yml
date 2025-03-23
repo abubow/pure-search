@@ -1,0 +1,135 @@
+version: '3.8'
+
+services:
+  # API Gateway service
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - GIN_MODE=release
+      - SERVER_ADDR=:8080
+      - SEARCH_API_URL=http://search-api:8081
+      - CONTENT_CLASSIFIER_URL=http://content-classifier:8082
+      - CONTENT_INDEXER_URL=http://content-indexer:8083
+    depends_on:
+      - search-api
+      - content-classifier
+      - content-indexer
+    networks:
+      - puresearch-network
+    restart: always
+
+  # Search API service
+  search-api:
+    build:
+      context: ./services/search-api
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      - GIN_MODE=release
+      - SERVER_ADDR=:8081
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - elasticsearch
+      - redis
+    networks:
+      - puresearch-network
+    restart: always
+
+  # Content Classifier service
+  content-classifier:
+    build:
+      context: ./services/content-classifier
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+    environment:
+      - FLASK_ENV=production
+      - PORT=8082
+    networks:
+      - puresearch-network
+    restart: always
+
+  # Content Indexer service
+  content-indexer:
+    build:
+      context: ./services/content-indexer
+      dockerfile: Dockerfile
+    ports:
+      - "8083:8083"
+    environment:
+      - GIN_MODE=release
+      - SERVER_ADDR=:8083
+      - MONGODB_URI=mongodb://mongodb:27017
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    depends_on:
+      - mongodb
+      - elasticsearch
+    networks:
+      - puresearch-network
+    restart: always
+
+  # MongoDB - for storing content metadata
+  mongodb:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - puresearch-network
+    restart: always
+
+  # Elasticsearch - for full-text search
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - puresearch-network
+    restart: always
+
+  # Redis - for caching
+  redis:
+    image: redis:7.0
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - puresearch-network
+    restart: always
+
+  # RabbitMQ - for message queue
+  rabbitmq:
+    image: rabbitmq:3.11-management
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI port
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - puresearch-network
+    restart: always
+
+volumes:
+  mongodb-data:
+  elasticsearch-data:
+  redis-data:
+  rabbitmq-data:
+
+networks:
+  puresearch-network:
+    driver: bridge 

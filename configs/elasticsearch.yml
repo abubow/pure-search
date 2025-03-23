@@ -1,0 +1,18 @@
+cluster.name: puresearch-es
+node.name: node-1
+network.host: 0.0.0.0
+discovery.type: single-node
+xpack.security.enabled: false
+
+# Paths
+path.data: /usr/share/elasticsearch/data
+path.logs: /usr/share/elasticsearch/logs
+
+# Memory settings
+bootstrap.memory_lock: true
+
+# Cross-origin resource sharing settings
+http.cors.enabled: true
+http.cors.allow-origin: "*"
+http.cors.allow-methods: OPTIONS, HEAD, GET, POST, PUT, DELETE
+http.cors.allow-headers: X-Requested-With, X-Auth-Token, Content-Type, Content-Length, Authorization 
