@@ -46,6 +46,17 @@ done
 # Return to backend root directory
 cd "$PARENT_DIR"
 
+# Setup Python dependencies for the crawler service
+echo -e "${YELLOW}Setting up Python dependencies for crawler service...${NC}"
+cd "$PARENT_DIR/services/crawler-service"
+if [ ! -f "requirements.txt" ]; then
+    echo -e "${RED}Error: requirements.txt not found for crawler service${NC}"
+    exit 1
+fi
+
+# Return to backend root directory
+cd "$PARENT_DIR"
+
 echo -e "${YELLOW}Building Docker images...${NC}"
 docker-compose build
 

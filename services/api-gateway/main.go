@@ -1,17 +1,91 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
+
+// @title          PureSearch API Gateway
+// @version        1.0
+// @description    API Gateway for PureSearch services
+// @termsOfService http://puresearch.example.com/terms/
+
+// @contact.name  API Support
+// @contact.url   http://puresearch.example.com/support
+// @contact.email support@puresearch.example.com
+
+// @license.name MIT
+// @license.url  https://opensource.org/licenses/MIT
+
+// @host      localhost:8080
+// @BasePath  /api/v1
+
+// ServiceProxy represents a service proxy configuration
+type ServiceProxy struct {
+	Name     string
+	URL      string
+	Endpoint string
+}
+
+// ErrorResponse represents an error response
+type ErrorResponse struct {
+	Status  int    `json:"status"`
+	Message string `json:"message"`
+	Error   string `json:"error"`
+}
+
+// Service URLs
+var (
+	searchAPIURL         string
+	contentClassifierURL string
+	contentIndexerURL    string
+	crawlerServiceURL    string
+)
+
+func init() {
+	// Get service URLs from environment variables
+	searchAPIURL = os.Getenv("SEARCH_API_URL")
+	if searchAPIURL == "" {
+		searchAPIURL = "http://localhost:8081"
+	}
+
+	contentClassifierURL = os.Getenv("CONTENT_CLASSIFIER_URL")
+	if contentClassifierURL == "" {
+		contentClassifierURL = "http://localhost:8082"
+	}
+
+	contentIndexerURL = os.Getenv("CONTENT_INDEXER_URL")
+	if contentIndexerURL == "" {
+		contentIndexerURL = "http://localhost:8083"
+	}
+
+	crawlerServiceURL = os.Getenv("CRAWLER_SERVICE_URL")
+	if crawlerServiceURL == "" {
+		crawlerServiceURL = "http://localhost:8084"
+	}
+}
+
+func getServiceURL(serviceEnvVar string) string {
+	url := os.Getenv(serviceEnvVar)
+	if !strings.HasPrefix(url, "http://") {
+		url = "http://" + url
+	}
+	return url
+}
 
 func main() {
 	// Set Gin mode based on environment
@@ -26,18 +100,21 @@ func main() {
 
 	// Configure CORS
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:3002"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Content-Type", "Accept"},
 		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
+		AllowCredentials: false,
 		MaxAge:           12 * time.Hour,
 	}))
+
+	// Swagger documentation
+	router.GET("/api/v1/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"status": "OK",
+			"status":  "OK",
 			"service": "api-gateway",
 		})
 	})
@@ -45,14 +122,58 @@ func main() {
 	// API routes
 	apiV1 := router.Group("/api/v1")
 	{
-		// Proxy search requests to the search service
-		apiV1.GET("/search", proxySearchRequest)
-		
-		// Content classifier endpoints
-		apiV1.POST("/classify", proxyClassifyRequest)
-		
-		// Content indexer endpoints
-		apiV1.POST("/index", proxyIndexRequest)
+		// @Summary      Search for human-written content
+		// @Description  Search for content based on the query
+		// @Tags         search
+		// @Accept       json
+		// @Produce      json
+		// @Param        q        query     string  true  "Search query"
+		// @Param        page     query     int     false "Page number (default: 1)"
+		// @Param        per_page query     int     false "Results per page (default: 10)"
+		// @Success      200      {object}  object
+		// @Failure      400      {object}  ErrorResponse
+		// @Failure      500      {object}  ErrorResponse
+		// @Router       /search [get]
+		apiV1.GET("/search", proxyHandler(searchAPIURL, "/search"))
+
+		// @Summary      Classify content
+		// @Description  Classify text as human-written or AI-generated
+		// @Tags         classify
+		// @Accept       json
+		// @Produce      json
+		// @Param        request body object true "Classification request with text to analyze"
+		// @Success      200     {object} object
+		// @Failure      400     {object} ErrorResponse
+		// @Failure      500     {object} ErrorResponse
+		// @Router       /classify [post]
+		apiV1.POST("/classify", proxyHandler(contentClassifierURL, "/classify"))
+
+		// @Summary      Index content
+		// @Description  Add content to the search index
+		// @Tags         index
+		// @Accept       json
+		// @Produce      json
+		// @Param        request body object true "Index request with content to add"
+		// @Success      200     {object} object
+		// @Failure      400     {object} ErrorResponse
+		// @Failure      500     {object} ErrorResponse
+		// @Router       /index [post]
+		apiV1.POST("/index", proxyHandler(contentIndexerURL, "/index"))
+		apiV1.GET("/index/:id", proxyHandler(contentIndexerURL, "/index"))
+		apiV1.DELETE("/index/:id", proxyHandler(contentIndexerURL, "/index"))
+
+		// @Summary      Crawl URL
+		// @Description  Crawl a URL to index its content
+		// @Tags         crawl
+		// @Accept       json
+		// @Produce      json
+		// @Param        request body object true "Crawl request with URL to crawl"
+		// @Success      200     {object} object
+		// @Failure      400     {object} ErrorResponse
+		// @Failure      500     {object} ErrorResponse
+		// @Router       /crawl [post]
+		apiV1.POST("/crawl", proxyHandler(crawlerServiceURL, "/crawl"))
+		apiV1.GET("/crawl/status/:id", proxyHandler(crawlerServiceURL, "/crawl/status"))
 	}
 
 	// Get server address from environment or use default
@@ -90,50 +211,55 @@ func main() {
 	log.Println("API Gateway server exited")
 }
 
-// Handler to proxy search requests to the search service
-func proxySearchRequest(c *gin.Context) {
-	// In a real implementation, this would forward the request to the Search API service
-	// For this example, we'll just return a mock response
-	query := c.Query("q")
-	if query == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Query parameter 'q' is required"})
-		return
+// proxyHandler creates a reverse proxy handler for the given target URL and endpoint
+func proxyHandler(targetURL, endpoint string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Create a reverse proxy
+		proxy := &httputil.ReverseProxy{
+			Director: func(req *http.Request) {
+				req.URL.Scheme = "http"
+				// Remove any http:// prefix from the target URL
+				targetURL = strings.TrimPrefix(targetURL, "http://")
+				req.URL.Host = targetURL
+
+				// Get the path without the /api/v1 prefix
+				path := strings.TrimPrefix(req.URL.Path, "/api/v1")
+				req.URL.Path = endpoint + path
+
+				log.Printf("Original request path: %s", c.Request.URL.Path)
+				log.Printf("Forwarding request to: %s://%s%s", req.URL.Scheme, req.URL.Host, req.URL.Path)
+				log.Printf("Query string: %s", req.URL.RawQuery)
+			},
+			ModifyResponse: func(resp *http.Response) error {
+				// Copy the response from the target service
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					log.Printf("Error reading response body: %v", err)
+					c.JSON(http.StatusInternalServerError, ErrorResponse{
+						Status:  http.StatusInternalServerError,
+						Message: "Error processing response",
+						Error:   err.Error(),
+					})
+					return err
+				}
+
+				log.Printf("Response status: %d", resp.StatusCode)
+
+				resp.Body.Close()
+				resp.Body = io.NopCloser(bytes.NewBuffer(body))
+				return nil
+			},
+			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+				log.Printf("Proxy error: %v", err)
+				c.JSON(http.StatusBadGateway, ErrorResponse{
+					Status:  http.StatusBadGateway,
+					Message: "Failed to proxy request",
+					Error:   err.Error(),
+				})
+			},
+		}
+
+		// Serve the request using the reverse proxy
+		proxy.ServeHTTP(c.Writer, c.Request)
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"query": query,
-		"results": []gin.H{
-			{
-				"id":          "1",
-				"title":       "The History of Classical Music - Authentic Analysis",
-				"url":         "https://example.com/classical-music-history",
-				"description": "An in-depth exploration of classical music through the ages, with authentic analysis from leading music historians.",
-				"confidence":  95,
-			},
-			{
-				"id":          "2",
-				"title":       "Traditional Cooking Methods from Around the World",
-				"url":         "https://example.com/traditional-cooking-methods",
-				"description": "Explore authentic cooking techniques passed down through generations across different cultures and regions.",
-				"confidence":  88,
-			},
-		},
-		"total": 2,
-	})
 }
-
-// Handler to proxy content classification requests to the classifier service
-func proxyClassifyRequest(c *gin.Context) {
-	// In a real implementation, this would forward the request to the Content Classifier service
-	c.JSON(http.StatusOK, gin.H{
-		"status": "Classification request would be forwarded to the classifier service",
-	})
-}
-
-// Handler to proxy indexing requests to the indexer service
-func proxyIndexRequest(c *gin.Context) {
-	// In a real implementation, this would forward the request to the Content Indexer service
-	c.JSON(http.StatusOK, gin.H{
-		"status": "Indexing request would be forwarded to the indexer service",
-	})
-} 

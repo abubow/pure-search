@@ -1,4 +1,4 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
@@ -18,6 +18,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o api-gateway .
 FROM alpine:3.18
 
 WORKDIR /app
+
+# Install curl for healthchecks
+RUN apk add --no-cache curl
 
 # Copy the binary from the builder stage
 COPY --from=builder /app/api-gateway .

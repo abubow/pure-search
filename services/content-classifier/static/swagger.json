@@ -1,0 +1,96 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "PureSearch Content Classifier API",
+    "description": "API for classifying content as human-written or AI-generated",
+    "version": "1.0.0",
+    "contact": {
+      "name": "API Support",
+      "url": "http://puresearch.example.com/support",
+      "email": "support@puresearch.example.com"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
+    }
+  },
+  "host": "localhost:8082",
+  "basePath": "/",
+  "schemes": ["http"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check endpoint",
+        "description": "Returns the health status of the service",
+        "produces": ["application/json"],
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "status": {"type": "string"},
+                "service": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/classify": {
+      "post": {
+        "summary": "Classify content",
+        "description": "Analyze text to determine if it was written by a human or AI",
+        "produces": ["application/json"],
+        "consumes": ["application/json"],
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Content to classify",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": ["text"],
+              "properties": {
+                "text": {"type": "string", "description": "Text content to analyze"},
+                "url": {"type": "string", "description": "Optional source URL"}
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Classification results",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "human_written": {"type": "boolean"},
+                "confidence": {"type": "number", "format": "float"},
+                "analysis": {
+                  "type": "object",
+                  "properties": {
+                    "length": {"type": "integer"},
+                    "complexity": {"type": "number", "format": "float"},
+                    "patternsDetected": {"type": "boolean"}
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

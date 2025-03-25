@@ -24,12 +24,36 @@ echo -e "${GREEN}API Gateway is running.${NC}"
 
 # Test search endpoint
 echo -e "${YELLOW}Testing search endpoint...${NC}"
-search_response=$(curl -s "http://localhost:8080/api/v1/search?q=test")
+search_response=$(curl -s "http://localhost:8080/api/v1/search?q=pure-search")
 if [[ $search_response == *"results"* ]]; then
     echo -e "${GREEN}Search endpoint is working properly.${NC}"
 else
     echo -e "${RED}Error: Search endpoint is not returning expected results.${NC}"
     echo $search_response
+    exit 1
+fi
+
+# Check if the search results have the expected structure
+echo -e "${YELLOW}Checking search results structure...${NC}"
+if [[ $search_response == *"\"query\""* && $search_response == *"\"results\""* && $search_response == *"\"total\""* ]]; then
+    echo -e "${GREEN}Search results have the expected structure.${NC}"
+else
+    echo -e "${RED}Error: Search results structure is not as expected.${NC}"
+    echo $search_response
+    exit 1
+fi
+
+# Test crawler endpoint with a sample URL
+echo -e "${YELLOW}Testing crawler endpoint...${NC}"
+crawler_response=$(curl -s -X POST http://localhost:8080/api/v1/crawl \
+    -H "Content-Type: application/json" \
+    -d '{"url": "https://example.com", "depth": 1}')
+
+if [[ $crawler_response == *"success"* ]]; then
+    echo -e "${GREEN}Crawler endpoint is working properly.${NC}"
+else
+    echo -e "${RED}Error: Crawler endpoint is not returning expected results.${NC}"
+    echo $crawler_response
     exit 1
 fi
 

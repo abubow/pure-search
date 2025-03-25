@@ -2,16 +2,38 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
+
+// @title          PureSearch Search API
+// @version        1.0
+// @description    API for searching human-written content
+// @termsOfService http://puresearch.example.com/terms/
+
+// @contact.name  API Support
+// @contact.url   http://puresearch.example.com/support
+// @contact.email support@puresearch.example.com
+
+// @license.name MIT
+// @license.url  https://opensource.org/licenses/MIT
+
+// @host      localhost:8081
+// @BasePath  /
 
 // SearchResult represents a single search result
 type SearchResult struct {
@@ -31,7 +53,39 @@ type SearchResponse struct {
 	PerPage int            `json:"per_page"`
 }
 
+// ElasticSearchSource represents the _source field in Elasticsearch results
+type ElasticSearchSource struct {
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	URL         string  `json:"url"`
+	Description string  `json:"description"`
+	Confidence  float64 `json:"confidence"`
+	Content     string  `json:"content,omitempty"`
+}
+
+// ElasticSearchHit represents a single hit in Elasticsearch response
+type ElasticSearchHit struct {
+	Source ElasticSearchSource `json:"_source"`
+}
+
+// ElasticSearchResponse represents the response from Elasticsearch
+type ElasticSearchResponse struct {
+	Hits struct {
+		Total struct {
+			Value int `json:"value"`
+		} `json:"total"`
+		Hits []ElasticSearchHit `json:"hits"`
+	} `json:"hits"`
+}
+
+var (
+	esClient *elasticsearch.Client
+)
+
 func main() {
+	// Initialize Elasticsearch client
+	initElasticsearch()
+
 	// Set Gin mode based on environment
 	ginMode := os.Getenv("GIN_MODE")
 	if ginMode == "" {
@@ -51,6 +105,9 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
+
+	// Swagger documentation
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
@@ -98,7 +155,50 @@ func main() {
 	log.Println("Search API server exited")
 }
 
-// handleSearch processes search requests
+// Initialize Elasticsearch client
+func initElasticsearch() {
+	esURL := os.Getenv("ELASTICSEARCH_URL")
+	if esURL == "" {
+		esURL = "http://localhost:9200"
+	}
+
+	cfg := elasticsearch.Config{
+		Addresses: []string{esURL},
+	}
+
+	var err error
+	esClient, err = elasticsearch.NewClient(cfg)
+	if err != nil {
+		log.Fatalf("Error creating Elasticsearch client: %s", err)
+	}
+
+	// Check if Elasticsearch is reachable
+	res, err := esClient.Info()
+	if err != nil {
+		log.Fatalf("Error connecting to Elasticsearch: %s", err)
+	}
+	defer res.Body.Close()
+
+	// Check response status
+	if res.IsError() {
+		log.Fatalf("Error response from Elasticsearch: %s", res.String())
+	}
+
+	log.Println("Successfully connected to Elasticsearch")
+}
+
+// @Summary      Search for human-written content
+// @Description  Search for content based on the query
+// @Tags         search
+// @Accept       json
+// @Produce      json
+// @Param        q        query     string  true  "Search query"
+// @Param        page     query     int     false "Page number (default: 1)"
+// @Param        per_page query     int     false "Results per page (default: 10)"
+// @Success      200      {object}  SearchResponse
+// @Failure      400      {object}  map[string]string
+// @Failure      500      {object}  map[string]string
+// @Router       /search [get]
 func handleSearch(c *gin.Context) {
 	// Get query parameters
 	query := c.Query("q")
@@ -107,73 +207,90 @@ func handleSearch(c *gin.Context) {
 		return
 	}
 
-	page := 1 // Default page
-	perPage := 10 // Default results per page
+	pageStr := c.DefaultQuery("page", "1")
+	perPageStr := c.DefaultQuery("per_page", "10")
 
-	// In a real implementation, we would query Elasticsearch or other search backend
-	// For now, return mock data
-	mockResults := []SearchResult{
-		{
-			ID:          "1",
-			Title:       "The History of Classical Music - Authentic Analysis",
-			URL:         "https://example.com/classical-music-history",
-			Description: "An in-depth exploration of classical music through the ages, with authentic analysis from leading music historians.",
-			Confidence:  95.0,
-		},
-		{
-			ID:          "2",
-			Title:       "Traditional Cooking Methods from Around the World",
-			URL:         "https://example.com/traditional-cooking-methods",
-			Description: "Explore authentic cooking techniques passed down through generations across different cultures and regions.",
-			Confidence:  88.0,
-		},
-		{
-			ID:          "3",
-			Title:       "Personal Travel Journal: Exploring Remote Villages in Asia",
-			URL:         "https://example.com/travel-asia-villages",
-			Description: "A personal account of travels through remote villages in Southeast Asia, with first-hand observations and cultural insights.",
-			Confidence:  92.0,
-		},
-		{
-			ID:          "4",
-			Title:       "Handcrafted Furniture: Techniques and Materials",
-			URL:         "https://example.com/handcrafted-furniture",
-			Description: "Learn about traditional woodworking techniques and materials used in creating handcrafted furniture.",
-			Confidence:  76.0,
-		},
-		{
-			ID:          "5",
-			Title:       "Local Wildlife Conservation Efforts in the Amazon",
-			URL:         "https://example.com/amazon-conservation",
-			Description: "Documenting local efforts to preserve biodiversity in the Amazon rainforest, with reports from field researchers.",
-			Confidence:  85.0,
-		},
-		{
-			ID:          "6",
-			Title:       "Historical Weather Patterns and Climate Change",
-			URL:         "https://example.com/historical-weather-patterns",
-			Description: "Analysis of historical weather data and how it relates to current climate change patterns.",
-			Confidence:  68.0,
-		},
-		{
-			ID:          "7",
-			Title:       "Family Recipes: Mediterranean Cuisine",
-			URL:         "https://example.com/mediterranean-family-recipes",
-			Description: "Collection of authentic family recipes from the Mediterranean region, passed down through generations.",
-			Confidence:  93.0,
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	perPage, err := strconv.Atoi(perPageStr)
+	if err != nil || perPage < 1 || perPage > 100 {
+		perPage = 10
+	}
+
+	// Calculate pagination
+	from := (page - 1) * perPage
+
+	// Construct Elasticsearch query
+	esQuery := map[string]interface{}{
+		"from": from,
+		"size": perPage,
+		"query": map[string]interface{}{
+			"multi_match": map[string]interface{}{
+				"query":  query,
+				"fields": []string{"title^3", "description^2", "content"},
+			},
 		},
 	}
 
+	// Convert query to JSON
+	queryJSON, err := json.Marshal(esQuery)
+	if err != nil {
+		log.Printf("Error marshaling query: %s", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	// Execute search
+	res, err := esClient.Search(
+		esClient.Search.WithContext(c.Request.Context()),
+		esClient.Search.WithIndex("content"),
+		esClient.Search.WithBody(strings.NewReader(string(queryJSON))),
+	)
+
+	if err != nil {
+		log.Printf("Error searching Elasticsearch: %s", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Search backend error"})
+		return
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		log.Printf("Elasticsearch error: %s", res.String())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Search error: %s", res.Status())})
+		return
+	}
+
+	// Parse response
+	var esResp ElasticSearchResponse
+	if err := json.NewDecoder(res.Body).Decode(&esResp); err != nil {
+		log.Printf("Error parsing Elasticsearch response: %s", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error processing search results"})
+		return
+	}
+
+	// Convert Elasticsearch results to SearchResult
+	results := make([]SearchResult, 0, len(esResp.Hits.Hits))
+	for _, hit := range esResp.Hits.Hits {
+		results = append(results, SearchResult{
+			ID:          hit.Source.ID,
+			Title:       hit.Source.Title,
+			URL:         hit.Source.URL,
+			Description: hit.Source.Description,
+			Confidence:  hit.Source.Confidence,
+		})
+	}
+
+	// Build response
 	response := SearchResponse{
 		Query:   query,
-		Results: mockResults,
-		Total:   len(mockResults),
+		Results: results,
+		Total:   esResp.Hits.Total.Value,
 		Page:    page,
 		PerPage: perPage,
 	}
-
-	// Add a small delay to simulate processing time
-	time.Sleep(200 * time.Millisecond)
 
 	c.JSON(http.StatusOK, response)
 } 

@@ -9,11 +9,11 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source code
+# Copy application code
 COPY . .
 
 # Expose port
-EXPOSE 8082
+EXPOSE 8084
 
-# Run the application with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8082", "app:app"] 
+# Command to run the application
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8084"] 

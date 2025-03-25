@@ -11,16 +11,27 @@ services:
     environment:
       - GIN_MODE=release
       - SERVER_ADDR=:8080
-      - SEARCH_API_URL=http://search-api:8081
-      - CONTENT_CLASSIFIER_URL=http://content-classifier:8082
-      - CONTENT_INDEXER_URL=http://content-indexer:8083
+      - SEARCH_API_URL=search-api:8081
+      - CONTENT_CLASSIFIER_URL=content-classifier:8082
+      - CONTENT_INDEXER_URL=content-indexer:8083
+      - CRAWLER_SERVICE_URL=crawler-service:8084
     depends_on:
-      - search-api
-      - content-classifier
-      - content-indexer
+      search-api:
+        condition: service_healthy
+      content-classifier:
+        condition: service_healthy
+      content-indexer:
+        condition: service_healthy
+      crawler-service:
+        condition: service_healthy
     networks:
       - puresearch-network
     restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # Search API service
   search-api:
@@ -35,11 +46,18 @@ services:
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - REDIS_URL=redis://redis:6379
     depends_on:
-      - elasticsearch
-      - redis
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - puresearch-network
     restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # Content Classifier service
   content-classifier:
@@ -51,9 +69,20 @@ services:
     environment:
       - FLASK_ENV=production
       - PORT=8082
+      - MONGODB_URI=mongodb://mongodb:27017
+    depends_on:
+      mongodb:
+        condition: service_started
     networks:
       - puresearch-network
+    volumes:
+      - ./services/content-classifier:/app
     restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # Content Indexer service
   content-indexer:
@@ -68,13 +97,52 @@ services:
       - MONGODB_URI=mongodb://mongodb:27017
       - ELASTICSEARCH_URL=http://elasticsearch:9200
     depends_on:
-      - mongodb
-      - elasticsearch
+      mongodb:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
     networks:
       - puresearch-network
     restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # MongoDB - for storing content metadata
+  # Crawler Service
+  crawler-service:
+    build:
+      context: ./services/crawler-service
+      dockerfile: Dockerfile
+    ports:
+      - "8084:8084"
+    environment:
+      - PORT=8084
+      - LOG_LEVEL=INFO
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - MONGODB_URI=mongodb://mongodb:27017
+      - REDIS_URL=redis://redis:6379
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      mongodb:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+    networks:
+      - puresearch-network
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8084/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB
   mongodb:
     image: mongo:6.0
     ports:
@@ -84,14 +152,22 @@ services:
     networks:
       - puresearch-network
     restart: always
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # Elasticsearch - for full-text search
+  # Elasticsearch
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - cluster.name=docker-cluster
+      - bootstrap.memory_lock=false
+      - cluster.routing.allocation.disk.threshold_enabled=false
     ports:
       - "9200:9200"
       - "9300:9300"
@@ -100,8 +176,14 @@ services:
     networks:
       - puresearch-network
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -vq '\"status\":\"red\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
-  # Redis - for caching
+  # Redis
   redis:
     image: redis:7.0
     ports:
@@ -111,18 +193,28 @@ services:
     networks:
       - puresearch-network
     restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # RabbitMQ - for message queue
+  # RabbitMQ
   rabbitmq:
     image: rabbitmq:3.11-management
     ports:
-      - "5672:5672"   # AMQP port
-      - "15672:15672" # Management UI port
+      - "5672:5672"
+      - "15672:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     networks:
       - puresearch-network
     restart: always
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   mongodb-data:

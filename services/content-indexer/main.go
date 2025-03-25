@@ -11,7 +11,24 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
+
+// @title          PureSearch Content Indexer API
+// @version        1.0
+// @description    API for indexing human-written content
+// @termsOfService http://puresearch.example.com/terms/
+
+// @contact.name  API Support
+// @contact.url   http://puresearch.example.com/support
+// @contact.email support@puresearch.example.com
+
+// @license.name MIT
+// @license.url  https://opensource.org/licenses/MIT
+
+// @host      localhost:8083
+// @BasePath  /
 
 // IndexRequest represents a request to index content
 type IndexRequest struct {
@@ -53,6 +70,9 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
+
+	// Swagger documentation
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
@@ -102,7 +122,16 @@ func main() {
 	log.Println("Content Indexer server exited")
 }
 
-// handleIndexRequest processes requests to index new content
+// @Summary      Index new content
+// @Description  Add content to the search index
+// @Tags         index
+// @Accept       json
+// @Produce      json
+// @Param        request  body      IndexRequest  true  "Index Request"
+// @Success      200      {object}  IndexResponse
+// @Failure      400      {object}  map[string]string
+// @Failure      500      {object}  map[string]string
+// @Router       /index [post]
 func handleIndexRequest(c *gin.Context) {
 	var request IndexRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -141,7 +170,16 @@ func handleIndexRequest(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// handleGetIndexedContent retrieves indexed content by ID
+// @Summary      Get indexed content
+// @Description  Retrieve details of indexed content by ID
+// @Tags         index
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Content ID"
+// @Success      200  {object}  IndexResponse
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /index/{id} [get]
 func handleGetIndexedContent(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
@@ -162,7 +200,16 @@ func handleGetIndexedContent(c *gin.Context) {
 	})
 }
 
-// handleDeleteIndexedContent removes indexed content by ID
+// @Summary      Delete indexed content
+// @Description  Remove content from the search index
+// @Tags         index
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Content ID"
+// @Success      200  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /index/{id} [delete]
 func handleDeleteIndexedContent(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
