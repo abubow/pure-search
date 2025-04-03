@@ -12,6 +12,23 @@ The backend consists of several microservices:
 4. **Content Indexer**: Indexes content for searching
 5. **Crawler Service**: Crawls websites to discover and index content
 
+## Features
+
+### Real-time Web Crawling
+
+PureSearch implements real-time web crawling for search queries:
+
+- When a user searches for a query, the system immediately returns any existing results
+- Simultaneously, a background task is started to crawl the web for fresh content related to the query
+- Results are available in subsequent searches without blocking the user experience
+- The search API and crawler service work together to maintain the content index
+
+To use this feature:
+- Regular search: `GET /api/v1/search?q=your+search+query`
+- Force refresh (trigger crawling even if results exist): `GET /api/v1/search?q=your+search+query&refresh=true`
+
+This approach offers the best of both worlds - fast results from existing data combined with fresh content discovery.
+
 ## Technologies Used
 
 - **Go**: For the API Gateway, Search API, and Content Indexer

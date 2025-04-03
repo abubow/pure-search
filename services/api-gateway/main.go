@@ -1,12 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/http/httputil"
 	"os"
 	"os/signal"
 	"strings"
@@ -21,7 +20,7 @@ import (
 
 // @title          PureSearch API Gateway
 // @version        1.0
-// @description    API Gateway for PureSearch services
+// @description    Central API Gateway for all PureSearch microservices, provides unified routing and CORS support
 // @termsOfService http://puresearch.example.com/terms/
 
 // @contact.name  API Support
@@ -100,11 +99,11 @@ func main() {
 
 	// Configure CORS
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowOrigins:     []string{"http://localhost:3000"}, // Frontend origin - should be configurable in production
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Content-Type", "Accept"},
+		AllowHeaders:     []string{"Content-Type", "Accept", "Origin"},
 		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: false,
+		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
 
@@ -122,55 +121,75 @@ func main() {
 	// API routes
 	apiV1 := router.Group("/api/v1")
 	{
+		// Search Endpoints
 		// @Summary      Search for human-written content
-		// @Description  Search for content based on the query
+		// @Description  Search for content based on query and filters
 		// @Tags         search
 		// @Accept       json
 		// @Produce      json
-		// @Param        q        query     string  true  "Search query"
-		// @Param        page     query     int     false "Page number (default: 1)"
-		// @Param        per_page query     int     false "Results per page (default: 10)"
-		// @Success      200      {object}  object
-		// @Failure      400      {object}  ErrorResponse
-		// @Failure      500      {object}  ErrorResponse
+		// @Param        q query string true "Search query"
+		// @Param        page query int false "Page number (default: 1)"
+		// @Param        per_page query int false "Results per page (default: 10)"
+		// @Param        refresh query bool false "Force refresh of search results (default: false)"
+		// @Param        minConfidence query float64 false "Minimum confidence score (0-100)"
+		// @Param        maxConfidence query float64 false "Maximum confidence score (0-100)"
+		// @Param        contentType query string false "Comma-separated list of content types (e.g., article,blog)"
+		// @Success      200 {object} object "SearchResponse from Search API"
+		// @Failure      400 {object} ErrorResponse
+		// @Failure      500 {object} ErrorResponse
 		// @Router       /search [get]
 		apiV1.GET("/search", proxyHandler(searchAPIURL, "/search"))
 
+		// @Summary      Get search suggestions
+		// @Description  Provide search term suggestions based on the input query
+		// @Tags         search
+		// @Accept       json
+		// @Produce      json
+		// @Param        q query string true "Partial search query"
+		// @Success      200 {object} object "SuggestionResponse from Search API"
+		// @Failure      400 {object} ErrorResponse
+		// @Failure      500 {object} ErrorResponse
+		// @Router       /suggest [get]
+		apiV1.GET("/suggest", proxyHandler(searchAPIURL, "/suggest"))
+
+		// Classify Endpoint
 		// @Summary      Classify content
 		// @Description  Classify text as human-written or AI-generated
 		// @Tags         classify
 		// @Accept       json
 		// @Produce      json
 		// @Param        request body object true "Classification request with text to analyze"
-		// @Success      200     {object} object
-		// @Failure      400     {object} ErrorResponse
-		// @Failure      500     {object} ErrorResponse
+		// @Success      200 {object} object
+		// @Failure      400 {object} ErrorResponse
+		// @Failure      500 {object} ErrorResponse
 		// @Router       /classify [post]
 		apiV1.POST("/classify", proxyHandler(contentClassifierURL, "/classify"))
 
+		// Index Endpoints
 		// @Summary      Index content
 		// @Description  Add content to the search index
 		// @Tags         index
 		// @Accept       json
 		// @Produce      json
 		// @Param        request body object true "Index request with content to add"
-		// @Success      200     {object} object
-		// @Failure      400     {object} ErrorResponse
-		// @Failure      500     {object} ErrorResponse
+		// @Success      200 {object} object
+		// @Failure      400 {object} ErrorResponse
+		// @Failure      500 {object} ErrorResponse
 		// @Router       /index [post]
 		apiV1.POST("/index", proxyHandler(contentIndexerURL, "/index"))
 		apiV1.GET("/index/:id", proxyHandler(contentIndexerURL, "/index"))
 		apiV1.DELETE("/index/:id", proxyHandler(contentIndexerURL, "/index"))
 
+		// Crawl Endpoints
 		// @Summary      Crawl URL
 		// @Description  Crawl a URL to index its content
 		// @Tags         crawl
 		// @Accept       json
 		// @Produce      json
 		// @Param        request body object true "Crawl request with URL to crawl"
-		// @Success      200     {object} object
-		// @Failure      400     {object} ErrorResponse
-		// @Failure      500     {object} ErrorResponse
+		// @Success      200 {object} object
+		// @Failure      400 {object} ErrorResponse
+		// @Failure      500 {object} ErrorResponse
 		// @Router       /crawl [post]
 		apiV1.POST("/crawl", proxyHandler(crawlerServiceURL, "/crawl"))
 		apiV1.GET("/crawl/status/:id", proxyHandler(crawlerServiceURL, "/crawl/status"))
@@ -214,52 +233,78 @@ func main() {
 // proxyHandler creates a reverse proxy handler for the given target URL and endpoint
 func proxyHandler(targetURL, endpoint string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Create a reverse proxy
-		proxy := &httputil.ReverseProxy{
-			Director: func(req *http.Request) {
-				req.URL.Scheme = "http"
-				// Remove any http:// prefix from the target URL
-				targetURL = strings.TrimPrefix(targetURL, "http://")
-				req.URL.Host = targetURL
+		// Remove /api/v1 prefix from the path
+		path := strings.TrimPrefix(c.Request.URL.Path, "/api/v1")
 
-				// Get the path without the /api/v1 prefix
-				path := strings.TrimPrefix(req.URL.Path, "/api/v1")
-				req.URL.Path = endpoint + path
-
-				log.Printf("Original request path: %s", c.Request.URL.Path)
-				log.Printf("Forwarding request to: %s://%s%s", req.URL.Scheme, req.URL.Host, req.URL.Path)
-				log.Printf("Query string: %s", req.URL.RawQuery)
-			},
-			ModifyResponse: func(resp *http.Response) error {
-				// Copy the response from the target service
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					log.Printf("Error reading response body: %v", err)
-					c.JSON(http.StatusInternalServerError, ErrorResponse{
-						Status:  http.StatusInternalServerError,
-						Message: "Error processing response",
-						Error:   err.Error(),
-					})
-					return err
-				}
-
-				log.Printf("Response status: %d", resp.StatusCode)
-
-				resp.Body.Close()
-				resp.Body = io.NopCloser(bytes.NewBuffer(body))
-				return nil
-			},
-			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-				log.Printf("Proxy error: %v", err)
-				c.JSON(http.StatusBadGateway, ErrorResponse{
-					Status:  http.StatusBadGateway,
-					Message: "Failed to proxy request",
-					Error:   err.Error(),
-				})
-			},
+		// Ensure target URL has http:// prefix
+		if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
+			targetURL = "http://" + targetURL
 		}
 
-		// Serve the request using the reverse proxy
-		proxy.ServeHTTP(c.Writer, c.Request)
+		// Create the target URL
+		targetFullURL := fmt.Sprintf("%s%s", targetURL, path)
+
+		// Log request details
+		log.Printf("Original request path: %s", c.Request.URL.Path)
+		log.Printf("Forwarding request to: %s", targetFullURL)
+		log.Printf("Query string: %s", c.Request.URL.RawQuery)
+
+		// Create a new request
+		req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, targetFullURL, c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, ErrorResponse{
+				Status:  http.StatusInternalServerError,
+				Message: "Error creating request",
+				Error:   err.Error(),
+			})
+			return
+		}
+
+		// Copy headers
+		for key, values := range c.Request.Header {
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+
+		// Copy query parameters
+		req.URL.RawQuery = c.Request.URL.RawQuery
+
+		// Create HTTP client with longer timeout
+		client := &http.Client{
+			Timeout: 30 * time.Second, // 30-second timeout for backend requests
+		}
+
+		// Send request
+		resp, err := client.Do(req)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, ErrorResponse{
+				Status:  http.StatusBadGateway,
+				Message: "Error forwarding request",
+				Error:   err.Error(),
+			})
+			return
+		}
+		defer resp.Body.Close()
+
+		// Log response status
+		log.Printf("Response status: %d", resp.StatusCode)
+
+		// Copy response headers - Skip CORS headers to avoid conflicts with our own CORS middleware
+		for key, values := range resp.Header {
+			// Skip CORS headers from the backend services to avoid duplication and conflicts
+			if strings.HasPrefix(strings.ToLower(key), "access-control-") {
+				continue
+			}
+			for _, value := range values {
+				c.Writer.Header().Add(key, value)
+			}
+		}
+
+		// Set response status
+		c.Writer.WriteHeader(resp.StatusCode)
+
+		// Copy response body
+		io.Copy(c.Writer, resp.Body)
 	}
 }

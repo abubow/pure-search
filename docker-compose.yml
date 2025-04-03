@@ -11,7 +11,7 @@ services:
     environment:
       - GIN_MODE=release
       - SERVER_ADDR=:8080
-      - SEARCH_API_URL=search-api:8081
+      - SEARCH_API_URL=http://search-api:8081
       - CONTENT_CLASSIFIER_URL=content-classifier:8082
       - CONTENT_INDEXER_URL=content-indexer:8083
       - CRAWLER_SERVICE_URL=crawler-service:8084
